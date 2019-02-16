@@ -3,9 +3,10 @@ Mini version of [XX-Net](https://github.com/XX-net/XX-Net) for Linux user.
 
 Usage: 
 
-    git clone https://github.com/miketwes/XX-Net-Linux.git -b master
+    git clone https://github.com/miketwes/XX-Net-Linux.git
     
-    # put your appids in XX-Net-Linux/data/config.json 
+    # put your appids in XX-Net-Linux/data/config.json
+    
     "GAE_APPIDS": [
         "yourappid1",
         "yourappid2"
@@ -15,9 +16,11 @@ Usage:
     cd XX-Net-Linux/local && python2 proxy.py
     
     # Chromium
+    
     chromium --proxy-server="http://127.0.0.1:8087"
     
     # Firefox 
+    
     about:config
     network.proxy.type 1     
     network.proxy.http 127.0.0.1
