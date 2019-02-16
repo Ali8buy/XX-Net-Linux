@@ -5,7 +5,7 @@ Usage:
 
     git clone https://github.com/miketwes/XX-Net-Linux.git -b master
     
-    #put your appids in XX-Net-Linux/data/config.json 
+    # put your appids in XX-Net-Linux/data/config.json 
     "GAE_APPIDS": [
         "yourappid1",
         "yourappid2"
