@@ -43,6 +43,62 @@ class GAEProxyHandler(simple_http_server.HttpServerHandler):
         self.__class__.do_DELETE = self.__class__.do_METHOD
         self.__class__.do_OPTIONS = self.__class__.do_METHOD
 
+    def forward_local(self):
+        """
+        If browser send localhost:xxx request to GAE_proxy,
+        we forward it to localhost.
+        """
+        request_headers = dict((k.title(), v) for k, v in self.headers.items())
+        payload = b''
+        if 'Content-Length' in request_headers:
+            try:
+                payload_len = int(request_headers.get('Content-Length', 0))
+                payload = self.rfile.read(payload_len)
+            except Exception as e:
+                logger.warn('forward_local read payload failed:%s', e)
+                return
+
+        response = simple_http_client.request(self.command, self.path, request_headers, payload)
+        if not response:
+            logger.warn("forward_local fail, command:%s, path:%s, headers: %s, payload: %s",
+                self.command, self.path, request_headers, payload)
+            return
+
+        out_list = []
+        out_list.append("HTTP/1.1 %d\r\n" % response.status)
+        for key in response.headers:
+            key = key.title()
+            out_list.append("%s: %s\r\n" % (key, response.headers[key]))
+        out_list.append("\r\n")
+        out_list.append(response.text)
+
+        self.wfile.write("".join(out_list))
+
+    def send_method_allows(self, headers, payload):
+        logger.debug("send method allow list for:%s %s", self.command, self.path)
+        # Refer: https://developer.mozilla.org/en-US/docs/Web/HTTP/Access_control_CORS#Preflighted_requests
+
+        response = \
+                "HTTP/1.1 200 OK\r\n"\
+                "Access-Control-Allow-Credentials: true\r\n"\
+                "Access-Control-Allow-Methods: GET, POST, HEAD, PUT, DELETE, PATCH\r\n"\
+                "Access-Control-Max-Age: 1728000\r\n"\
+                "Content-Length: 0\r\n"
+
+        req_header = headers.get("Access-Control-Request-Headers", "")
+        if req_header:
+            response += "Access-Control-Allow-Headers: %s\r\n" % req_header
+
+        origin = headers.get("Origin", "")
+        if origin:
+            response += "Access-Control-Allow-Origin: %s\r\n" % origin
+        else:
+            response += "Access-Control-Allow-Origin: *\r\n"
+
+        response += "\r\n"
+
+        self.wfile.write(response)
+
     def is_local(self, hosts):
         if 0 == len(self.local_names):
             self.local_names.append('localhost')
@@ -104,7 +160,10 @@ class GAEProxyHandler(simple_http_server.HttpServerHandler):
         host = self.headers.get('Host', '')
         host_ip, _, port = host.rpartition(':')
 
-        if host == self.fake_host:
+        if self.is_local([host, host_ip]):
+            logger.debug("Browse localhost by proxy")
+            return self.forward_local()
+        elif host == self.fake_host:
             # logger.debug("%s %s", self.command, self.path)
             # for web_ui status page
             # auto detect browser proxy setting is work
@@ -158,6 +217,9 @@ class GAEProxyHandler(simple_http_server.HttpServerHandler):
         request_headers = dict((k.title(), v) for k, v in self.headers.items())
         payload = self.read_payload()
 
+        if self.command == "OPTIONS":
+            return self.send_method_allows(request_headers, payload)
+
         if self.command not in self.gae_support_methods:
             logger.warn("Method %s not support in GAEProxy for %s", self.command, self.path)
             return self.wfile.write(('HTTP/1.1 404 Not Found\r\n\r\n').encode())
@@ -185,8 +247,40 @@ class GAEProxyHandler(simple_http_server.HttpServerHandler):
 
         payload = b''
         if 'Content-Length' in self.headers:
-            payload_len = int(self.headers.get('Content-Length', 0))
-            payload = self.rfile.read(payload_len)
+            try:
+                payload_len = int(self.headers.get('Content-Length', 0))
+                #logger.debug("payload_len:%d %s %s", payload_len, self.command, self.path)
+                payload = self.rfile.read(payload_len)
+            except NetWorkIOError as e:
+                logger.error('handle_method_urlfetch read payload failed:%s', e)
+                return
+        elif 'Transfer-Encoding' in self.headers:
+            # chunked, used by facebook android client
+            payload = ""
+            while True:
+                chunk_size_str = self.rfile.readline(65537)
+                chunk_size_list = chunk_size_str.split(";")
+                chunk_size = int("0x"+chunk_size_list[0], 0)
+                if len(chunk_size_list) > 1 and chunk_size_list[1] != "\r\n":
+                    logger.warn("chunk ext: %s", chunk_size_str)
+                if chunk_size == 0:
+                    while True:
+                        line = self.rfile.readline(65537)
+                        if line == "\r\n":
+                            break
+                        else:
+                            logger.warn("entity header:%s", line)
+                    break
+                payload += self.rfile.read(chunk_size)
+                get_crlf(self.rfile)
 
         self.req_payload = payload
         return payload
+
+# called by smart_router
+def wrap_ssl(sock, host, port, client_address):
+    certfile = CertUtil.get_cert(host or 'www.google.com')
+    ssl_sock = ssl.wrap_socket(sock, keyfile=CertUtil.cert_keyfile,
+                               certfile=certfile, server_side=True)
+    return ssl_sock
+
