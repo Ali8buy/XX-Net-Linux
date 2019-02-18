@@ -35,7 +35,7 @@ Note: all XX-Net 3.13.1 related Python 2.7.15+ libs are latest version and insta
     Package      Version
     ------------ -------
     asn1crypto   0.24.0 
-    cffi         1.12.0 
+    cffi         1.12.1 
     cryptography 2.5    
     enum34       1.1.6  
     h2           3.1.0  
